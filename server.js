@@ -8,20 +8,35 @@ const cors = require('cors');
 
 // --- INISIALISASI ---
 const app = express();
-const PORT = 3000;
+// PORT tidak lagi didefinisikan di sini, Vercel akan menanganinya
 
 // --- KONEKSI DATABASE ---
+// (Kode koneksi database Anda tetap sama persis)
 const db = new sqlite3.Database('./gadai.db', (err) => {
     if (err) {
         console.error("Error saat membuka database", err.message);
     } else {
         console.log("Terhubung ke database SQLite.");
+        // ... (Semua kode db.serialize Anda tetap di sini) ...
         db.serialize(() => {
-            // Membuat tabel users
-            db.run(`CREATE TABLE IF NOT EXISTS users (...)`, (err) => { /* ... kode tabel ... */ });
-            // Membuat tabel submissions
-            db.run(`CREATE TABLE IF NOT EXISTS submissions (...)`, (err) => { /* ... kode tabel ... */ });
-            // Membuat user admin default
+            db.run(`CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user'
+            )`);
+            db.run(`CREATE TABLE IF NOT EXISTS submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                userId INTEGER,
+                itemName TEXT NOT NULL,
+                description TEXT,
+                photoUrl TEXT,
+                status TEXT DEFAULT 'Diajukan',
+                appraisedValue REAL DEFAULT 0,
+                submissionDate TEXT,
+                FOREIGN KEY(userId) REFERENCES users(id)
+            )`);
             const adminEmail = 'admin@gadai.com';
             const adminPassword = 'admin123';
             db.get(`SELECT * FROM users WHERE email = ?`, [adminEmail], (err, row) => {
@@ -31,7 +46,7 @@ const db = new sqlite3.Database('./gadai.db', (err) => {
                             ['Admin Gadai', adminEmail, hash, 'admin'],
                             (err) => {
                                 if(err) console.error("Gagal membuat user admin:", err.message)
-                                else console.log(`User admin default berhasil dibuat. Email: ${adminEmail}, Pass: ${adminPassword}`);
+                                else console.log(`User admin default berhasil dibuat.`);
                             }
                         );
                     });
@@ -41,15 +56,11 @@ const db = new sqlite3.Database('./gadai.db', (err) => {
     }
 });
 
+
 // --- MIDDLEWARE ---
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// =================================================================
-// TAMBAHAN PENTING: MENYAJIKAN FILE HTML, CSS, JS (PENGGANTI LIVE SERVER)
-app.use(express.static(__dirname));
-// =================================================================
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, 'uploads/'),
@@ -57,31 +68,42 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- SEMUA API ROUTES ANDA DI SINI ---
-// (API Registrasi, Login, Admin Login, Submissions, dll. tetap sama)
-// ...
-// ... (Kode API Anda dari sini ke bawah tidak perlu diubah) ...
-// ...
+// =================================================================
+// PENAMBAHAN BARU: MENYAJIKAN FILE HTML SECARA EKSPLISIT
+// =================================================================
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+app.get('/index.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+app.get('/admin-login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin-login.html'));
+});
+app.get('/admin.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.html'));
+});
 
+
+// --- SEMUA API ROUTES ANDA DI SINI ---
+// (Semua kode API Anda dari sini ke bawah tetap sama persis)
+// ... (API Registrasi, Login, Admin Login, Submissions, dll.) ...
 // --- API REGISTRASI ---
 app.post('/api/register', async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) {
         return res.status(400).json({ message: "Semua field harus diisi" });
     }
-
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
         const sql = `INSERT INTO users (name, email, password) VALUES (?, ?, ?)`;
         db.run(sql, [name, email, hashedPassword], function (err) {
             if (err) {
-                console.error("Database error saat registrasi:", err.message);
                 return res.status(500).json({ message: "Email mungkin sudah terdaftar." });
             }
             res.status(201).json({ message: "Registrasi berhasil!", userId: this.lastID });
         });
     } catch (error) {
-        console.error("Server error saat hashing password:", error);
         res.status(500).json({ message: 'Terjadi kesalahan pada server' });
     }
 });
@@ -90,11 +112,9 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', (req, res) => {
     const { email, password } = req.body;
     const sql = `SELECT * FROM users WHERE email = ?`;
-
     db.get(sql, [email], async (err, user) => {
         if (err) return res.status(500).json({ message: "Database error" });
         if (!user) return res.status(401).json({ message: "Email atau password salah" });
-
         try {
             const match = await bcrypt.compare(password, user.password);
             if (match) {
@@ -116,19 +136,12 @@ app.post('/api/admin/login', async (req, res) => {
     try {
         const { email, password } = req.body;
         const sql = `SELECT * FROM users WHERE email = ?`;
-
         db.get(sql, [email], async (err, user) => {
-            if (err) {
-                console.error("Admin Login DB Error:", err);
-                return res.status(500).json({ message: "Database error" });
-            }
-            if (!user) {
-                return res.status(401).json({ message: "Kredensial tidak valid" });
-            }
+            if (err) return res.status(500).json({ message: "Database error" });
+            if (!user) return res.status(401).json({ message: "Kredensial tidak valid" });
             if (user.role !== 'admin') {
                 return res.status(403).json({ message: "Akses ditolak. Bukan admin." });
             }
-
             const match = await bcrypt.compare(password, user.password);
             if (match) {
                 res.json({
@@ -140,18 +153,15 @@ app.post('/api/admin/login', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error("FATAL ADMIN LOGIN ERROR:", error);
         res.status(500).json({ message: "Terjadi kesalahan internal pada server." });
     }
 });
-
 
 // --- API PENGAJUAN GADAI ---
 app.post('/api/submissions', upload.single('photo'), (req, res) => {
     const { userId, itemName, description } = req.body;
     const photoUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const submissionDate = new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
-
     const sql = `INSERT INTO submissions (userId, itemName, description, photoUrl, submissionDate) VALUES (?, ?, ?, ?, ?)`;
     db.run(sql, [userId, itemName, description, photoUrl, submissionDate], function(err) {
         if (err) {
@@ -192,13 +202,5 @@ app.put('/api/admin/submissions/:id', (req, res) => {
         if (this.changes === 0) return res.status(404).json({ message: "Pengajuan tidak ditemukan" });
         res.json({ message: "Pengajuan berhasil diperbarui" });
     });
-});
-
-
-// --- START SERVER (VERSI DEPLOYMENT) ---
-const HOST_PORT = process.env.PORT || 3000;
-app.listen(HOST_PORT, () => {
-    console.log(`Server berjalan di port ${HOST_PORT}`);
-    console.log(`Akses aplikasi di http://localhost:${HOST_PORT}`);
 });
 
