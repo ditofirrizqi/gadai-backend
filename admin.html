@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Manajemen Gadai</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- SATPAM KEAMANAN -->
+    <script>
+        const isAdminAuthenticated = sessionStorage.getItem('admin_auth') === 'true';
+        if (!isAdminAuthenticated) {
+            window.location.href = '/admin-login.html';
+        }
+    </script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .status-badge { padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .status-diajukan { background-color: #e0f2fe; color: #0c4a6e; }
+        .status-disetujui { background-color: #dcfce7; color: #166534; }
+        .status-ditolak { background-color: #fee2e2; color: #991b1b; }
+        .status-selesai { background-color: #e5e7eb; color: #374151; }
+        #modal-backdrop.hidden, #modal-panel.hidden { display: none; }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div class="container mx-auto p-8">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Manajemen Pengajuan</h1>
+            <div>
+                <button id="refresh-button" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2 transition-colors">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    <span>Refresh</span>
+                </button>
+                 <button id="logout-button" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2 transition-colors ml-2">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </div>
+        
+        <div id="admin-submission-list" class="bg-white rounded-lg shadow overflow-hidden">
+            <!-- Daftar pengajuan akan di-render di sini -->
+        </div>
+    </div>
+
+    <!-- Modal untuk Detail dan Update -->
+    <div id="modal-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-50 z-40 hidden"></div>
+    <div id="modal-panel" class="fixed inset-0 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg m-4">
+            <div class="p-6 border-b flex justify-between items-center">
+                <h2 class="text-xl font-bold text-gray-800">Detail Pengajuan</h2>
+                <button id="close-modal-button" class="text-gray-400 hover:text-gray-600">&times;</button>
+            </div>
+            <div id="modal-content" class="p-6">
+                <!-- Konten detail akan di-load di sini -->
+            </div>
+            <div class="p-6 bg-gray-50 rounded-b-lg">
+                <h3 class="font-semibold mb-2">Tindakan Admin</h3>
+                <form id="update-form">
+                    <input type="hidden" id="update-id">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="update-appraisedValue" class="block text-sm font-medium text-gray-700 mb-1">Nilai Taksiran (Rp)</label>
+                            <input type="number" id="update-appraisedValue" class="w-full px-3 py-2 border rounded-lg" placeholder="Contoh: 5000000" required>
+                        </div>
+                        <div>
+                            <label for="update-status" class="block text-sm font-medium text-gray-700 mb-1">Ubah Status</label>
+                            <select id="update-status" class="w-full px-3 py-2 border rounded-lg" required>
+                                <option value="Diajukan">Diajukan</option>
+                                <option value="Disetujui">Disetujui</option>
+                                <option value="Ditolak">Ditolak</option>
+                                <option value="Selesai">Selesai</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-semibold transition-colors">Simpan Perubahan</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const API_BASE_URL = 'http://localhost:3000';
+        const listContainer = document.getElementById('admin-submission-list');
+        const refreshButton = document.getElementById('refresh-button');
+        const logoutButton = document.getElementById('logout-button');
+        
+        const modalBackdrop = document.getElementById('modal-backdrop');
+        const modalPanel = document.getElementById('modal-panel');
+        const modalContent = document.getElementById('modal-content');
+        const closeModalButton = document.getElementById('close-modal-button');
+        const updateForm = document.getElementById('update-form');
+
+        const fetchAllSubmissions = async () => {
+            listContainer.innerHTML = `<p class="text-center p-8 text-gray-500">Memuat semua pengajuan...</p>`;
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/admin/submissions`);
+                if (!response.ok) throw new Error('Gagal mengambil data dari server');
+                const submissions = await response.json();
+                renderSubmissions(submissions);
+            } catch (error) {
+                listContainer.innerHTML = `<p class="text-center p-8 text-red-500">${error.message}</p>`;
+            }
+        };
+
+        const renderSubmissions = (submissions) => {
+            listContainer.innerHTML = '';
+            if (submissions.length === 0) {
+                listContainer.innerHTML = `<p class="text-center p-8 text-gray-500">Belum ada pengajuan yang masuk.</p>`;
+                return;
+            }
+            submissions.forEach(sub => {
+                const statusClass = `status-${sub.status.toLowerCase().replace(' ', '-')}`;
+                const card = document.createElement('div');
+                card.className = 'p-4 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <img src="${sub.photoUrl}" onerror="this.src='https://placehold.co/48x48/e2e8f0/64748b?text=Foto'" class="w-12 h-12 object-cover rounded-md bg-gray-200">
+                            <div>
+                                <p class="font-bold text-gray-800">${sub.itemName}</p>
+                                <p class="text-sm text-gray-600">${sub.userName} (<span class="text-gray-500">${sub.userEmail}</span>)</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span class="status-badge ${statusClass}">${sub.status}</span>
+                            <p class="text-xs text-gray-400 mt-1">${sub.submissionDate}</p>
+                        </div>
+                    </div>
+                `;
+                card.addEventListener('click', () => openUpdateModal(sub));
+                listContainer.appendChild(card);
+            });
+        };
+        
+        const openUpdateModal = (submission) => {
+            modalContent.innerHTML = `
+                <div class="flex gap-4 mb-4">
+                    <img src="${submission.photoUrl}" onerror="this.src='https://placehold.co/96x96/e2e8f0/64748b?text=Foto'" class="w-24 h-24 object-cover rounded-lg">
+                    <div>
+                        <h4 class="font-bold">${submission.itemName}</h4>
+                        <p class="text-sm text-gray-600">Oleh: ${submission.userName}</p>
+                        <p class="text-sm text-gray-500">Tgl: ${submission.submissionDate}</p>
+                    </div>
+                </div>
+                <p class="text-sm bg-gray-100 p-2 rounded-md">${submission.description}</p>
+            `;
+            document.getElementById('update-id').value = submission.id;
+            document.getElementById('update-status').value = submission.status;
+            document.getElementById('update-appraisedValue').value = submission.appraisedValue > 0 ? submission.appraisedValue : '';
+
+            modalBackdrop.classList.remove('hidden');
+            modalPanel.classList.remove('hidden');
+        };
+
+        const closeModal = () => {
+            modalBackdrop.classList.add('hidden');
+            modalPanel.classList.add('hidden');
+        };
+
+        const handleLogout = () => {
+            sessionStorage.removeItem('admin_auth');
+            window.location.href = '/admin-login.html';
+        };
+
+        updateForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('update-id').value;
+            const status = document.getElementById('update-status').value;
+            const appraisedValue = document.getElementById('update-appraisedValue').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/admin/submissions/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status, appraisedValue })
+                });
+                if (!response.ok) throw new Error('Gagal memperbarui data');
+                
+                alert('Data berhasil diperbarui!');
+                closeModal();
+                fetchAllSubmissions();
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        });
+
+        refreshButton.addEventListener('click', fetchAllSubmissions);
+        logoutButton.addEventListener('click', handleLogout);
+        closeModalButton.addEventListener('click', closeModal);
+        modalBackdrop.addEventListener('click', closeModal);
+
+        fetchAllSubmissions();
+    });
+    </script>
+</body>
+</html>
+
